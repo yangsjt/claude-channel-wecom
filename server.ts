@@ -68,6 +68,19 @@ interface PendingMessage {
 
 const pendingMessages = new Map<string, PendingMessage>();
 
+// Cleanup stale pending messages every 60 seconds (30 min TTL)
+const PENDING_MESSAGE_TTL_MS = 30 * 60 * 1000;
+const pendingCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, msg] of pendingMessages) {
+    if (now - msg.timestamp > PENDING_MESSAGE_TTL_MS) {
+      log(`Cleaning up stale pending message: ${key}`);
+      pendingMessages.delete(key);
+    }
+  }
+}, 60_000);
+if (pendingCleanupTimer.unref) pendingCleanupTimer.unref();
+
 // ---------------------------------------------------------------------------
 // MCP Server
 // ---------------------------------------------------------------------------
@@ -246,11 +259,19 @@ async function postResponseUrl(responseUrl: string, text: string): Promise<void>
     markdown: { content: text },
   });
   log(`response_url POST: url=${responseUrl.substring(0, 60)}... bodyLen=${body.length}`);
-  const res = await fetch(responseUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15_000);
+  let res: Response;
+  try {
+    res = await fetch(responseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
   const resBody = await res.text().catch(() => "");
   if (!res.ok) {
     throw new Error(`response_url POST failed: ${res.status} ${resBody}`);

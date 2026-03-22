@@ -21,6 +21,8 @@ export interface AccessConfig {
   pairingCode: string | null;
   /** User ID that initiated pairing */
   pairingInitiator: string | null;
+  /** Pairing code expiry timestamp (ms) */
+  pairingExpiresAt: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,13 +46,13 @@ function ensureDir(): void {
 function loadAccessConfig(): AccessConfig {
   ensureDir();
   if (!existsSync(ACCESS_FILE)) {
-    return { mode: "paired", allowedUsers: [], pairingCode: null, pairingInitiator: null };
+    return { mode: "paired", allowedUsers: [], pairingCode: null, pairingInitiator: null, pairingExpiresAt: null };
   }
   try {
     const raw = readFileSync(ACCESS_FILE, "utf8");
     return JSON.parse(raw) as AccessConfig;
   } catch {
-    return { mode: "paired", allowedUsers: [], pairingCode: null, pairingInitiator: null };
+    return { mode: "paired", allowedUsers: [], pairingCode: null, pairingInitiator: null, pairingExpiresAt: null };
   }
 }
 
@@ -95,11 +97,14 @@ export function isUserAllowed(userId: string): boolean {
  * Generate a pairing code for a new user.
  * Returns the code to show to the developer in Claude Code.
  */
+const PAIRING_CODE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
 export function generatePairingCode(initiatorUserId: string): string {
   const code = Math.random().toString(36).slice(2, 8).toUpperCase();
   const config = getConfig();
   config.pairingCode = code;
   config.pairingInitiator = initiatorUserId;
+  config.pairingExpiresAt = Date.now() + PAIRING_CODE_TTL_MS;
   persist();
   return code;
 }
@@ -110,6 +115,14 @@ export function generatePairingCode(initiatorUserId: string): string {
 export function attemptPairing(userId: string, code: string): boolean {
   const config = getConfig();
   if (!config.pairingCode) return false;
+  // Check expiry
+  if (config.pairingExpiresAt && Date.now() > config.pairingExpiresAt) {
+    config.pairingCode = null;
+    config.pairingInitiator = null;
+    config.pairingExpiresAt = null;
+    persist();
+    return false;
+  }
   if (code.toUpperCase() !== config.pairingCode.toUpperCase()) return false;
 
   // Pairing successful — add user to allowlist
@@ -118,6 +131,7 @@ export function attemptPairing(userId: string, code: string): boolean {
   }
   config.pairingCode = null;
   config.pairingInitiator = null;
+  config.pairingExpiresAt = null;
   persist();
   return true;
 }
