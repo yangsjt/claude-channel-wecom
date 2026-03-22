@@ -581,7 +581,13 @@ async function handleCallback(req: Request, url: URL): Promise<Response> {
     return new Response("request body too large", { status: 413 });
   }
 
-  if (config.mode === "aibot") {
+  // Auto-detect mode from body format: JSON (AI Bot) vs XML (Agent)
+  const trimmed = body.trimStart();
+  if (trimmed.startsWith("{")) {
+    return handleAiBotCallback(body, signature, timestamp, nonce);
+  } else if (trimmed.startsWith("<")) {
+    return handleAgentCallback(body, signature, timestamp, nonce);
+  } else if (config.mode === "aibot") {
     return handleAiBotCallback(body, signature, timestamp, nonce);
   } else {
     return handleAgentCallback(body, signature, timestamp, nonce);
