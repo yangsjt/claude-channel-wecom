@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "wecom-channel": {
+      "command": "bun",
+      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/server.ts"],
+      "env": {
+        "NODE_PATH": "${CLAUDE_PLUGIN_DATA}/node_modules",
+        "WECOM_MODE": "aibot",
+        "WECOM_TOKEN": "",
+        "WECOM_ENCODING_AES_KEY": "",
+        "WECOM_CORP_ID": "",
+        "WECOM_CORP_SECRET": "",
+        "WECOM_AGENT_ID": "",
+        "WECOM_CALLBACK_PORT": "8788",
+        "WECOM_API_BASE_URL": ""
+      }
+    }
+  }
+}
