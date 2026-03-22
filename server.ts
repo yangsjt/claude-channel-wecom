@@ -147,6 +147,30 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["url"],
       },
     },
+    {
+      name: "manage_access",
+      description:
+        "Manage WeCom channel access control. Actions: " +
+        "'pair' generates a 6-character pairing code (valid 15 min) for a WeCom user to authorize themselves. " +
+        "'add' directly adds a user ID to the allowlist. " +
+        "'remove' removes a user from the allowlist. " +
+        "'list' shows all allowed users and current access mode. " +
+        "'mode' sets access mode to 'open' (allow all) or 'paired' (allowlist only).",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: {
+            type: "string",
+            description: "Action to perform: pair, add, remove, list, mode",
+          },
+          value: {
+            type: "string",
+            description: "User ID (for add/remove) or mode value (open/paired). Not needed for pair/list.",
+          },
+        },
+        required: ["action"],
+      },
+    },
   ],
 }));
 
@@ -186,8 +210,72 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
   }
 
+  if (req.params.name === "manage_access") {
+    const { action, value } = req.params.arguments as {
+      action: string;
+      value?: string;
+    };
+    try {
+      const result = handleManageAccess(action, value);
+      return {
+        content: [{ type: "text" as const, text: result }],
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: "text" as const, text: `Access management failed: ${message}` }],
+        isError: true,
+      };
+    }
+  }
+
   throw new Error(`Unknown tool: ${req.params.name}`);
 });
+
+// ---------------------------------------------------------------------------
+// Access management handler
+// ---------------------------------------------------------------------------
+
+function handleManageAccess(action: string, value?: string): string {
+  switch (action) {
+    case "pair": {
+      const code = generatePairingCode("developer");
+      return `Pairing code generated: ${code}\nValid for 15 minutes. The WeCom user should send this code as a message to pair.`;
+    }
+    case "add": {
+      if (!value) throw new Error("User ID required for 'add' action");
+      addUser(value);
+      return `User ${value} added to allowlist.`;
+    }
+    case "remove": {
+      if (!value) throw new Error("User ID required for 'remove' action");
+      removeUser(value);
+      return `User ${value} removed from allowlist.`;
+    }
+    case "list": {
+      const users = listUsers();
+      const mode = getMode();
+      const pairing = getPairingState();
+      const lines = [
+        `Access mode: ${mode}`,
+        `Allowed users (${users.length}): ${users.length > 0 ? users.join(", ") : "(none)"}`,
+      ];
+      if (pairing.hasPendingPairing) {
+        lines.push(`Pending pairing code: ${pairing.code}`);
+      }
+      return lines.join("\n");
+    }
+    case "mode": {
+      if (value !== "open" && value !== "paired") {
+        throw new Error("Mode must be 'open' or 'paired'");
+      }
+      setMode(value);
+      return `Access mode set to: ${value}`;
+    }
+    default:
+      throw new Error(`Unknown action: ${action}. Use: pair, add, remove, list, mode`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Reply handler

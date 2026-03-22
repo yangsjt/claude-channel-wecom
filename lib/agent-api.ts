@@ -119,6 +119,23 @@ export async function agentSendText(params: {
   });
   const json = (await res.json()) as Record<string, any>;
 
+  if (json?.errcode === 45009) {
+    // Rate limited — retry once after 1 second
+    await new Promise((r) => setTimeout(r, 1000));
+    const retryRes = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const retryJson = (await retryRes.json()) as Record<string, any>;
+    if (retryJson?.errcode !== 0) {
+      throw new Error(
+        `agent send ${msgtype} rate-limited and retry failed: ${retryJson?.errcode} ${retryJson?.errmsg}`,
+      );
+    }
+    return;
+  }
+
   if (json?.errcode !== 0) {
     throw new Error(
       `agent send ${msgtype} failed: ${json?.errcode} ${json?.errmsg}`,
