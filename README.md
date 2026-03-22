@@ -92,10 +92,37 @@ Then set the Callback URL in WeCom admin console to `https://<YOUR_DOMAIN>/app/c
 
 ### 4. Start
 
+Use tmux to keep the session alive in the background:
+
 ```bash
-claude --mcp-config ./mcp-dev.json \
-       --dangerously-load-development-channels server:wecom-channel
+tmux new -s wecom
 ```
+
+Then choose a permission level:
+
+```bash
+# Level 1: Read-only (safe) — Claude can only read files and search code
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --allowedTools "Read Glob Grep"
+
+# Level 2: Read-write (recommended) — Claude can edit files and run git
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --allowedTools "Read Glob Grep Edit Write Bash(git:*)"
+
+# Level 3: Auto mode (high trust) — Claude auto-executes most operations
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --permission-mode auto
+
+# Level 4: Full access (use with caution) — no permission checks at all
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --dangerously-skip-permissions
+```
+
+Detach tmux with `Ctrl+B D`, reattach with `tmux attach -t wecom`.
 
 ### 5. Test
 
@@ -252,10 +279,37 @@ location /app/cc {
 
 ### 4. 启动
 
+用 tmux 保持会话后台运行：
+
 ```bash
-claude --mcp-config ./mcp-dev.json \
-       --dangerously-load-development-channels server:wecom-channel
+tmux new -s wecom
 ```
+
+选择权限级别：
+
+```bash
+# Level 1: 只读（安全）— 只能读文件、搜索代码
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --allowedTools "Read Glob Grep"
+
+# Level 2: 读写（推荐日常）— 可编辑文件、执行 git
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --allowedTools "Read Glob Grep Edit Write Bash(git:*)"
+
+# Level 3: 自动模式（高信任）— 大部分操作自动执行
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --permission-mode auto
+
+# Level 4: 全放开（谨慎使用）— 跳过所有权限检查
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --dangerously-skip-permissions
+```
+
+`Ctrl+B D` 脱离 tmux，`tmux attach -t wecom` 重新连接。
 
 ### 5. 测试
 
