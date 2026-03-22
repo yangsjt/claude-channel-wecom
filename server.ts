@@ -96,8 +96,11 @@ const mcp = new Server(
       "Messages from the wecom-channel arrive as <channel source=\"wecom-channel\" ...>.",
       "Each message is from a WeCom (Enterprise WeChat) user.",
       "Attributes include: sender (user ID), chat_type (single or group), and msg_type.",
-      "Use the reply tool to respond to the user.",
-      "Messages support Markdown formatting in AI Bot mode.",
+      "Use the reply tool to respond to the user. Messages support Markdown formatting in AI Bot mode.",
+      "To manage access control, use the manage_access tool:",
+      "- 'pair' generates a 6-char pairing code (15 min). Tell the WeCom user to send the code as a message.",
+      "- 'list' shows allowed users and mode. 'add'/'remove' manage users. 'mode' switches open/paired.",
+      "When the user asks for a pairing code or says '配对码', use manage_access with action 'pair' — do NOT use reply.",
     ].join(" "),
   },
 );
@@ -652,7 +655,7 @@ async function handleAiBotCallback(
       }
       log(`Access denied for user: ${msg.fromUser}`);
       const streamId = streamManager.create();
-      streamManager.finish(streamId, "⚠️ 无权限。请联系开发者获取配对码。");
+      streamManager.finish(streamId, "⚠️ 无权限。请让开发者在 Claude Code 中输入「wecom 配对码」生成配对码，然后将配对码发送到此对话即可完成授权。");
       const responseBody = crypto.buildStreamResponse(
         streamId, "⚠️ 无权限", true, timestamp, nonce,
       );
@@ -791,7 +794,7 @@ async function handleAgentCallback(
         agentSendText({
           agent: { corpId: config.corpId, corpSecret: config.corpSecret, agentId: config.agentId },
           toUser: msg.senderId,
-          text: "⚠️ 无权限。请联系开发者获取配对码。",
+          text: "⚠️ 无权限。请让开发者在 Claude Code 中输入「wecom 配对码」生成配对码，然后将配对码发送到此对话即可完成授权。",
         }).catch((err) => log(`Access denied reply failed: ${err}`));
       }
       return successResponse;

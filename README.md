@@ -117,13 +117,36 @@ Send a message from WeCom to your bot — Claude Code should receive it and repl
 |------|-------------|
 | `reply` | Send text/Markdown reply to the WeCom user |
 | `download_attachment` | Download images/files from WeCom messages |
+| `manage_access` | Manage access control: generate pairing codes, add/remove users, switch mode |
 
 ## Access Control
 
-By default, all users are blocked. Set access mode or add users:
+By default, all users are blocked (`paired` mode). To authorize a WeCom user:
 
-- Edit `~/.claude/channels/wecom/access.json` to set `"mode": "open"` for testing
-- Use the pairing flow for production (see `ACCESS.md`)
+### Pairing Flow
+
+1. In the Claude Code session (where the plugin is running), type:
+   ```
+   wecom 配对码
+   ```
+2. Claude calls `manage_access(action: "pair")` and generates a 6-character code (valid 15 min)
+3. Share the code with the WeCom user
+4. The user sends the code as a message in WeCom
+5. Plugin responds with "配对成功" — the user is now authorized
+
+### Quick Setup (Testing)
+
+For testing, you can set open mode in Claude Code:
+```
+把 wecom access 模式设为 open
+```
+
+Or edit `~/.claude/channels/wecom/access.json` directly:
+```json
+{ "mode": "open" }
+```
+
+See `ACCESS.md` for full details.
 
 ## Firewall Note
 
@@ -254,13 +277,36 @@ claude --mcp-config ./mcp-dev.json \
 |------|------|
 | `reply` | 发送文本/Markdown 回复给企业微信用户 |
 | `download_attachment` | 下载企业微信消息中的图片/文件 |
+| `manage_access` | 管理访问控制：生成配对码、添加/移除用户、切换模式 |
 
 ## 访问控制
 
-默认阻止所有用户。设置方式：
+默认阻止所有用户（`paired` 模式）。授权企业微信用户的流程：
 
-- 编辑 `~/.claude/channels/wecom/access.json`，设 `"mode": "open"` 用于测试
-- 生产环境使用配对流程（详见 `ACCESS.md`）
+### 配对流程
+
+1. 在运行插件的 Claude Code 会话中输入：
+   ```
+   wecom 配对码
+   ```
+2. Claude 调用 `manage_access` 生成 6 位配对码（15 分钟有效）
+3. 将配对码分享给企业微信用户
+4. 用户在企业微信中发送配对码
+5. 插件返回"配对成功"— 用户获得授权
+
+### 快速设置（测试用）
+
+在 Claude Code 中输入：
+```
+把 wecom access 模式设为 open
+```
+
+或直接编辑 `~/.claude/channels/wecom/access.json`：
+```json
+{ "mode": "open" }
+```
+
+详见 `ACCESS.md`。
 
 ## 防火墙注意
 
