@@ -43,8 +43,17 @@ import {
 // Logging — stdout is reserved for MCP stdio, so all logging goes to stderr
 // ---------------------------------------------------------------------------
 
-function log(msg: string) {
-  console.error(`[wecom-channel] ${msg}`);
+type LogLevel = "debug" | "info" | "warn" | "error";
+
+function log(msg: string, level: LogLevel = "info", meta?: Record<string, unknown>) {
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    src: "wecom-channel",
+    msg,
+    ...meta,
+  };
+  console.error(JSON.stringify(entry));
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +314,11 @@ async function handleReply(text: string): Promise<string> {
   if (config.mode === "aibot") {
     // AI Bot mode: update stream with final reply
     const stream = streamManager.get(latest.streamId);
-    log(`Reply: streamId=${latest.streamId} streamExists=${!!stream} streamFinished=${stream?.finished} streamExpired=${latest.streamId ? streamManager.isExpired(latest.streamId) : 'N/A'} hasResponseUrl=${!!latest.responseUrl}`);
+    log("Reply handler invoked", "info", {
+      streamId: latest.streamId, streamExists: !!stream, streamFinished: stream?.finished,
+      streamExpired: latest.streamId ? streamManager.isExpired(latest.streamId) : null,
+      hasResponseUrl: !!latest.responseUrl, fromUser: latest.fromUser,
+    });
     if (stream && !stream.finished) {
       streamManager.finish(latest.streamId, replyText, thinkingContent);
       log(`Reply: stream finished with ${replyText.length} chars`);
@@ -499,7 +512,7 @@ async function emitChannelMessage(opts: {
     },
   });
 
-  log(`Emitted channel message: ${opts.sender} / ${opts.msgType} / ${opts.msgId}`);
+  log("Channel message emitted", "info", { sender: opts.sender, msgType: opts.msgType, msgId: opts.msgId });
 }
 
 // ---------------------------------------------------------------------------
@@ -619,7 +632,7 @@ async function handleAiBotCallback(
     // Stream refresh request — return current stream state
     const stream = streamManager.get(result.streamId);
     if (stream) {
-      log(`Stream poll: id=${stream.id} finished=${stream.finished} contentLen=${stream.content.length}`);
+      log("Stream poll", "debug", { streamId: stream.id, finished: stream.finished, contentLen: stream.content.length });
       const responseBody = crypto.buildStreamResponse(
         stream.id,
         stream.finished ? stream.content : "正在思考...",
@@ -659,7 +672,7 @@ async function handleAiBotCallback(
           });
         }
       }
-      log(`Access denied for user: ${msg.fromUser}`);
+      log("Access denied", "warn", { fromUser: msg.fromUser });
       const streamId = streamManager.create();
       streamManager.finish(streamId, "⚠️ 无权限。请让开发者在 Claude Code 中输入「wecom 配对码」生成配对码，然后将配对码发送到此对话即可完成授权。");
       const responseBody = crypto.buildStreamResponse(
@@ -672,7 +685,7 @@ async function handleAiBotCallback(
 
     // Create a stream for this message
     const streamId = streamManager.create();
-    log(`Stream created: id=${streamId} for user=${msg.fromUser} msgId=${msg.msgId}`);
+    log("Stream created", "info", { streamId, fromUser: msg.fromUser, msgId: msg.msgId });
 
     // Store pending message for reply
     const pendingKey = `${msg.fromUser}:${msg.msgId}`;
@@ -794,7 +807,7 @@ async function handleAgentCallback(
           return successResponse;
         }
       }
-      log(`Access denied for user: ${msg.senderId}`);
+      log("Access denied", "warn", { senderId: msg.senderId });
       // Send rejection via Agent API (async)
       if (config.corpId && config.corpSecret && config.agentId) {
         agentSendText({
@@ -846,15 +859,17 @@ async function handleAgentCallback(
 // Main
 // ---------------------------------------------------------------------------
 
+let httpServer: ReturnType<typeof Bun.serve> | null = null;
+
 async function main() {
-  log(`Starting WeCom Channel Plugin (mode: ${config.mode})`);
+  log("Starting WeCom Channel Plugin", "info", { mode: config.mode, port: config.callbackPort });
 
   // Start HTTP callback server
   try {
-    startHttpServer();
+    httpServer = startHttpServer();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log(`Warning: Could not start HTTP server on port ${config.callbackPort}: ${message}`);
+    log(`Warning: Could not start HTTP server on port ${config.callbackPort}: ${message}`, "warn");
   }
 
   // Connect MCP server over stdio
@@ -864,7 +879,21 @@ async function main() {
   log("MCP server connected — WeCom channel is live");
 }
 
+// Graceful shutdown
+function shutdown(signal: string) {
+  log(`Received ${signal}, shutting down`, "info");
+  if (httpServer) {
+    httpServer.stop();
+    log("HTTP server stopped", "info");
+  }
+  streamManager.destroy();
+  process.exit(0);
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+
 main().catch((err) => {
-  log(`Fatal error: ${err}`);
+  log(`Fatal error: ${err}`, "error");
   process.exit(1);
 });
