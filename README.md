@@ -1,190 +1,3 @@
-# WeCom Channel Plugin for Claude Code
-
-A [Claude Code Channel](https://code.claude.com/docs/en/channels) plugin that bridges WeCom (Enterprise WeChat / 企业微信) messages into Claude Code sessions via MCP.
-
-Send messages to Claude Code from WeCom, receive AI-powered replies with streaming support, and share images/files — all through your enterprise WeChat.
-
-## Features
-
-- **Dual Mode** — AI Bot (智能机器人) for minimal setup, or Agent (自建应用) for full control
-- **Stream Reply** — Real-time "thinking..." indicator with typewriter-effect delivery
-- **Media Support** — Send images and files from WeCom, Claude can download and analyze them
-- **Access Control** — Pairing-based user authorization
-- **Markdown** — Rich text formatting in AI Bot mode replies
-
-## Architecture
-
-```
-WeCom User
-    ↓ sends message
-WeCom Server
-    ↓ HTTPS callback
-Reverse Proxy (nginx)
-    ↓ proxy_pass
-Plugin HTTP Server (:8788)
-    ↓ decrypt + parse
-MCP Server (stdio)
-    ↓ notification
-Claude Code Session
-    ↓ calls reply tool
-WeCom User ← stream response
-```
-
-## Quick Start
-
-### Prerequisites
-
-- [Bun](https://bun.sh) runtime
-- [Claude Code](https://claude.ai/code) v2.1.80+
-- A WeCom enterprise account with AI Bot or Self-built App
-
-### 1. Clone and Install
-
-```bash
-git clone https://github.com/yangsjt/claude-channel-wecom.git
-cd claude-channel-wecom
-npm install
-```
-
-### 2. Configure Credentials
-
-Create `mcp-dev.json` (this file is gitignored):
-
-```json
-{
-  "mcpServers": {
-    "wecom-channel": {
-      "command": "bun",
-      "args": ["run", "/absolute/path/to/claude-channel-wecom/server.ts"],
-      "env": {
-        "WECOM_MODE": "aibot",
-        "WECOM_TOKEN": "<your-token>",
-        "WECOM_ENCODING_AES_KEY": "<your-43-char-key>",
-        "WECOM_CALLBACK_PORT": "8788"
-      }
-    }
-  }
-}
-```
-
-See `.env.example` for all available options.
-
-### 3. Set Up Reverse Proxy
-
-WeCom requires an HTTPS callback URL. Configure your reverse proxy (e.g., nginx) to forward to the plugin:
-
-```nginx
-# Example: forward /app/cc to the plugin's HTTP server
-location /app/cc {
-    proxy_pass         http://<YOUR_MACHINE_IP>:8788/callback;
-    proxy_http_version 1.1;
-    proxy_set_header   Host $host;
-    proxy_set_header   X-Real-IP $remote_addr;
-    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_connect_timeout 10s;
-    proxy_read_timeout    60s;
-    proxy_buffering       off;
-    client_max_body_size  5m;
-}
-```
-
-Then set the Callback URL in WeCom admin console to `https://<YOUR_DOMAIN>/app/cc`.
-
-### 4. Start
-
-Use tmux to keep the session alive in the background:
-
-```bash
-tmux new -s wecom
-```
-
-Then choose a permission level:
-
-```bash
-# Level 1: Read-only (safe) — Claude can only read files and search code
-claude --mcp-config ./mcp-dev.json \
-       --dangerously-load-development-channels server:wecom-channel \
-       --allowedTools "Read Glob Grep"
-
-# Level 2: Read-write (recommended) — Claude can edit files and run git
-claude --mcp-config ./mcp-dev.json \
-       --dangerously-load-development-channels server:wecom-channel \
-       --allowedTools "Read Glob Grep Edit Write Bash(git:*)"
-
-# Level 3: Auto mode (high trust) — Claude auto-executes most operations
-claude --mcp-config ./mcp-dev.json \
-       --dangerously-load-development-channels server:wecom-channel \
-       --permission-mode auto
-
-# Level 4: Full access (use with caution) — no permission checks at all
-claude --mcp-config ./mcp-dev.json \
-       --dangerously-load-development-channels server:wecom-channel \
-       --dangerously-skip-permissions
-```
-
-Detach tmux with `Ctrl+B D`, reattach with `tmux attach -t wecom`.
-
-### 5. Test
-
-Send a message from WeCom to your bot — Claude Code should receive it and reply.
-
-## Modes
-
-| | AI Bot (智能机器人) | Agent (自建应用) |
-|---|---|---|
-| Config | Token + EncodingAESKey | + corpId, corpSecret, agentId |
-| Inbound | JSON | XML |
-| Reply | Stream + response_url | Agent REST API |
-| Media | Encrypted URL download | `/cgi-bin/media/get` |
-| Setup | Minimal | Full credentials |
-
-## MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `reply` | Send text/Markdown reply to the WeCom user |
-| `download_attachment` | Download images/files from WeCom messages |
-| `manage_access` | Manage access control: generate pairing codes, add/remove users, switch mode |
-
-## Access Control
-
-By default, all users are blocked (`paired` mode). To authorize a WeCom user:
-
-### Pairing Flow
-
-1. In the Claude Code session (where the plugin is running), type:
-   ```
-   wecom 配对码
-   ```
-2. Claude calls `manage_access(action: "pair")` and generates a 6-character code (valid 15 min)
-3. Share the code with the WeCom user
-4. The user sends the code as a message in WeCom
-5. Plugin responds with "配对成功" — the user is now authorized
-
-### Quick Setup (Testing)
-
-For testing, you can set open mode in Claude Code:
-```
-把 wecom access 模式设为 open
-```
-
-Or edit `~/.claude/channels/wecom/access.json` directly:
-```json
-{ "mode": "open" }
-```
-
-See `ACCESS.md` for full details.
-
-## Firewall Note
-
-If your machine has a firewall (e.g., macOS `pf`), ensure port `8788` is open for inbound connections from your reverse proxy.
-
-## License
-
-MIT
-
----
-
 # WeCom Channel 插件 — Claude Code 企业微信通道
 
 一个 [Claude Code Channel](https://code.claude.com/docs/en/channels) 插件，通过 MCP 协议将企业微信消息桥接到 Claude Code 会话中。
@@ -367,5 +180,192 @@ claude --mcp-config ./mcp-dev.json \
 如果你的机器有防火墙（如 macOS `pf`），确保端口 `8788` 对反向代理的入站连接开放。
 
 ## 许可证
+
+MIT
+
+---
+
+# WeCom Channel Plugin for Claude Code
+
+A [Claude Code Channel](https://code.claude.com/docs/en/channels) plugin that bridges WeCom (Enterprise WeChat / 企业微信) messages into Claude Code sessions via MCP.
+
+Send messages to Claude Code from WeCom, receive AI-powered replies with streaming support, and share images/files — all through your enterprise WeChat.
+
+## Features
+
+- **Dual Mode** — AI Bot (智能机器人) for minimal setup, or Agent (自建应用) for full control
+- **Stream Reply** — Real-time "thinking..." indicator with typewriter-effect delivery
+- **Media Support** — Send images and files from WeCom, Claude can download and analyze them
+- **Access Control** — Pairing-based user authorization
+- **Markdown** — Rich text formatting in AI Bot mode replies
+
+## Architecture
+
+```
+WeCom User
+    ↓ sends message
+WeCom Server
+    ↓ HTTPS callback
+Reverse Proxy (nginx)
+    ↓ proxy_pass
+Plugin HTTP Server (:8788)
+    ↓ decrypt + parse
+MCP Server (stdio)
+    ↓ notification
+Claude Code Session
+    ↓ calls reply tool
+WeCom User ← stream response
+```
+
+## Quick Start
+
+### Prerequisites
+
+- [Bun](https://bun.sh) runtime
+- [Claude Code](https://claude.ai/code) v2.1.80+
+- A WeCom enterprise account with AI Bot or Self-built App
+
+### 1. Clone and Install
+
+```bash
+git clone https://github.com/yangsjt/claude-channel-wecom.git
+cd claude-channel-wecom
+npm install
+```
+
+### 2. Configure Credentials
+
+Create `mcp-dev.json` (this file is gitignored):
+
+```json
+{
+  "mcpServers": {
+    "wecom-channel": {
+      "command": "bun",
+      "args": ["run", "/absolute/path/to/claude-channel-wecom/server.ts"],
+      "env": {
+        "WECOM_MODE": "aibot",
+        "WECOM_TOKEN": "<your-token>",
+        "WECOM_ENCODING_AES_KEY": "<your-43-char-key>",
+        "WECOM_CALLBACK_PORT": "8788"
+      }
+    }
+  }
+}
+```
+
+See `.env.example` for all available options.
+
+### 3. Set Up Reverse Proxy
+
+WeCom requires an HTTPS callback URL. Configure your reverse proxy (e.g., nginx) to forward to the plugin:
+
+```nginx
+# Example: forward /app/cc to the plugin's HTTP server
+location /app/cc {
+    proxy_pass         http://<YOUR_MACHINE_IP>:8788/callback;
+    proxy_http_version 1.1;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_connect_timeout 10s;
+    proxy_read_timeout    60s;
+    proxy_buffering       off;
+    client_max_body_size  5m;
+}
+```
+
+Then set the Callback URL in WeCom admin console to `https://<YOUR_DOMAIN>/app/cc`.
+
+### 4. Start
+
+Use tmux to keep the session alive in the background:
+
+```bash
+tmux new -s wecom
+```
+
+Then choose a permission level:
+
+```bash
+# Level 1: Read-only (safe) — Claude can only read files and search code
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --allowedTools "Read Glob Grep"
+
+# Level 2: Read-write (recommended) — Claude can edit files and run git
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --allowedTools "Read Glob Grep Edit Write Bash(git:*)"
+
+# Level 3: Auto mode (high trust) — Claude auto-executes most operations
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --permission-mode auto
+
+# Level 4: Full access (use with caution) — no permission checks at all
+claude --mcp-config ./mcp-dev.json \
+       --dangerously-load-development-channels server:wecom-channel \
+       --dangerously-skip-permissions
+```
+
+Detach tmux with `Ctrl+B D`, reattach with `tmux attach -t wecom`.
+
+### 5. Test
+
+Send a message from WeCom to your bot — Claude Code should receive it and reply.
+
+## Modes
+
+| | AI Bot (智能机器人) | Agent (自建应用) |
+|---|---|---|
+| Config | Token + EncodingAESKey | + corpId, corpSecret, agentId |
+| Inbound | JSON | XML |
+| Reply | Stream + response_url | Agent REST API |
+| Media | Encrypted URL download | `/cgi-bin/media/get` |
+| Setup | Minimal | Full credentials |
+
+## MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `reply` | Send text/Markdown reply to the WeCom user |
+| `download_attachment` | Download images/files from WeCom messages |
+| `manage_access` | Manage access control: generate pairing codes, add/remove users, switch mode |
+
+## Access Control
+
+By default, all users are blocked (`paired` mode). To authorize a WeCom user:
+
+### Pairing Flow
+
+1. In the Claude Code session (where the plugin is running), type:
+   ```
+   wecom 配对码
+   ```
+2. Claude calls `manage_access(action: "pair")` and generates a 6-character code (valid 15 min)
+3. Share the code with the WeCom user
+4. The user sends the code as a message in WeCom
+5. Plugin responds with "配对成功" — the user is now authorized
+
+### Quick Setup (Testing)
+
+For testing, you can set open mode in Claude Code:
+```
+把 wecom access 模式设为 open
+```
+
+Or edit `~/.claude/channels/wecom/access.json` directly:
+```json
+{ "mode": "open" }
+```
+
+See `ACCESS.md` for full details.
+
+## Firewall Note
+
+If your machine has a firewall (e.g., macOS `pf`), ensure port `8788` is open for inbound connections from your reverse proxy.
+
+## License
 
 MIT
