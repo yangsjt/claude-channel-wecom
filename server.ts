@@ -12,6 +12,7 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 
 import { loadConfig, type WecomConfig } from "./lib/config.js";
 import { WecomCrypto } from "./lib/crypto.js";
@@ -38,6 +39,14 @@ import {
   CALLBACK_TIMESTAMP_TOLERANCE_S,
   CALLBACK_MAX_BODY_BYTES,
 } from "./lib/constants.js";
+import {
+  type PendingPermission,
+  PENDING_PERMISSION_TTL_MS,
+  PERMISSION_REPLY_RE,
+  formatPermissionMessage,
+  matchPermissionReply,
+  findByShortId,
+} from "./lib/permission.js";
 
 // ---------------------------------------------------------------------------
 // Logging — stdout is reserved for MCP stdio, so all logging goes to stderr
@@ -91,6 +100,109 @@ const pendingCleanupTimer = setInterval(() => {
 if (pendingCleanupTimer.unref) pendingCleanupTimer.unref();
 
 // ---------------------------------------------------------------------------
+// Permission request forwarding
+// ---------------------------------------------------------------------------
+
+const pendingPermissions = new Map<string, PendingPermission>();
+
+// Cleanup stale pending permissions alongside messages
+const permCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, perm] of pendingPermissions) {
+    if (now - perm.timestamp > PENDING_PERMISSION_TTL_MS) {
+      log(`Cleaning up stale pending permission: ${key}`);
+      pendingPermissions.delete(key);
+    }
+  }
+}, 60_000);
+if (permCleanupTimer.unref) permCleanupTimer.unref();
+
+/**
+ * Find the most recent allowed user from pendingMessages to deliver permission requests.
+ */
+function findRecentAllowedUser(): PendingMessage | undefined {
+  let latest: PendingMessage | undefined;
+  for (const [, msg] of pendingMessages) {
+    if (!latest || msg.timestamp > latest.timestamp) {
+      latest = msg;
+    }
+  }
+  return latest;
+}
+
+/**
+ * Send a permission request message to the WeCom user.
+ */
+async function sendPermissionRequest(perm: PendingPermission): Promise<void> {
+  const text = formatPermissionMessage(perm);
+
+  const target = findRecentAllowedUser();
+  if (!target) {
+    log("No recent user to send permission request to", "warn");
+    return;
+  }
+
+  if (config.mode === "aibot") {
+    if (target.responseUrl) {
+      await postResponseUrl(target.responseUrl, text).catch((err) =>
+        log(`Permission request response_url POST failed: ${err}`, "error"),
+      );
+    } else {
+      log("No response_url available for permission request (aibot mode)", "warn");
+    }
+  } else {
+    if (config.corpId && config.corpSecret && config.agentId) {
+      await agentSendText({
+        agent: { corpId: config.corpId, corpSecret: config.corpSecret, agentId: config.agentId },
+        toUser: target.fromUser,
+        text,
+      }).catch((err) => log(`Permission request agent send failed: ${err}`, "error"));
+    } else {
+      log("Agent credentials missing for permission request", "warn");
+    }
+  }
+}
+
+/**
+ * Handle a permission reply from the user.
+ * Returns true if the message was a permission reply (and was handled), false otherwise.
+ */
+async function handlePermissionReply(
+  text: string,
+  fromUser: string,
+  replyFn: (msg: string) => Promise<void>,
+): Promise<boolean> {
+  const parsed = matchPermissionReply(text);
+  if (!parsed) return false;
+
+  const { approved, shortId } = parsed;
+  const result = findByShortId(pendingPermissions, shortId);
+
+  if (!result) {
+    await replyFn(`⚠️ 未找到匹配的权限请求 (${shortId})`).catch(() => {});
+    return true; // Still consumed the message pattern
+  }
+
+  // Send permission decision back to Claude
+  await mcp.notification({
+    method: "notifications/claude/channel/permission",
+    params: {
+      request_id: result.perm.requestId,
+      behavior: approved ? "allow" : "deny",
+    },
+  });
+
+  pendingPermissions.delete(result.key);
+
+  const emoji = approved ? "✅" : "❌";
+  const action = approved ? "已批准" : "已拒绝";
+  await replyFn(`${emoji} ${action}: ${result.perm.toolName}`).catch(() => {});
+
+  log(`Permission ${action}: ${result.perm.toolName} (${result.perm.requestId})`, "info", { fromUser });
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // MCP Server
 // ---------------------------------------------------------------------------
 
@@ -98,7 +210,7 @@ const mcp = new Server(
   { name: "wecom-channel", version: "0.1.0" },
   {
     capabilities: {
-      experimental: { "claude/channel": {} },
+      experimental: { "claude/channel": {}, "claude/channel/permission": {} },
       tools: {},
     },
     instructions: [
@@ -683,6 +795,30 @@ async function handleAiBotCallback(
       });
     }
 
+    // Permission reply intercept
+    if (msg.content && PERMISSION_REPLY_RE.test(msg.content.trim())) {
+      const replyStreamId = streamManager.create();
+      const handled = await handlePermissionReply(
+        msg.content,
+        msg.fromUser,
+        async (confirmText) => {
+          streamManager.finish(replyStreamId, confirmText);
+        },
+      );
+      if (handled) {
+        const responseBody = crypto.buildStreamResponse(
+          replyStreamId,
+          streamManager.get(replyStreamId)?.content || "✅",
+          true,
+          timestamp,
+          nonce,
+        );
+        return new Response(responseBody, {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
     // Create a stream for this message
     const streamId = streamManager.create();
     log("Stream created", "info", { streamId, fromUser: msg.fromUser, msgId: msg.msgId });
@@ -819,6 +955,23 @@ async function handleAgentCallback(
       return successResponse;
     }
 
+    // Permission reply intercept
+    if (msg.text && PERMISSION_REPLY_RE.test(msg.text.trim())) {
+      const agentCreds = config.corpId && config.corpSecret && config.agentId
+        ? { corpId: config.corpId, corpSecret: config.corpSecret, agentId: config.agentId }
+        : null;
+      handlePermissionReply(
+        msg.text,
+        msg.senderId,
+        async (confirmText) => {
+          if (agentCreds) {
+            await agentSendText({ agent: agentCreds, toUser: msg.senderId, text: confirmText });
+          }
+        },
+      ).catch((err) => log(`Permission reply handling failed: ${err}`, "error"));
+      return successResponse;
+    }
+
     // Store pending message for reply
     const pendingKey = `${msg.senderId}:${msg.msgId}`;
     pendingMessages.set(pendingKey, {
@@ -871,6 +1024,33 @@ async function main() {
     const message = err instanceof Error ? err.message : String(err);
     log(`Warning: Could not start HTTP server on port ${config.callbackPort}: ${message}`, "warn");
   }
+
+  // Register permission request notification handler
+  mcp.setNotificationHandler(
+    z.object({
+      method: z.literal("notifications/claude/channel/permission_request"),
+      params: z.object({
+        request_id: z.string(),
+        tool_name: z.string(),
+        description: z.string(),
+        input_preview: z.string(),
+      }),
+    }),
+    async ({ params }) => {
+      const { request_id, tool_name, description, input_preview } = params;
+      log("Permission request received", "info", { request_id, tool_name });
+
+      const perm: PendingPermission = {
+        requestId: request_id,
+        toolName: tool_name,
+        description,
+        inputPreview: input_preview,
+        timestamp: Date.now(),
+      };
+      pendingPermissions.set(request_id, perm);
+      await sendPermissionRequest(perm);
+    },
+  );
 
   // Connect MCP server over stdio
   const transport = new StdioServerTransport();

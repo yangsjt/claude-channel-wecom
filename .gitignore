@@ -3,5 +3,6 @@ dist/
 .env
 .env.local
 mcp-dev.json
+.mcp.json
 *.tgz
 bun.lock

@@ -1,11 +1,6 @@
 {
   "name": "wecom",
+  "description": "WeCom (Enterprise WeChat) channel for Claude Code — messaging bridge with built-in access control and pairing.",
   "version": "0.1.0",
-  "description": "WeCom (Enterprise WeChat) Channel Plugin for Claude Code — enables two-way messaging between Claude Code sessions and WeCom users via AI Bot or Self-built App mode.",
-  "author": {
-    "name": "yangsjt"
-  },
-  "repository": "https://github.com/yangsjt/claude-channel-wecom",
-  "license": "MIT",
-  "keywords": ["wecom", "wechat-work", "channels", "enterprise", "messaging"]
+  "keywords": ["wecom", "wechat", "messaging", "channel", "mcp"]
 }

@@ -1,15 +1,13 @@
 {
   "name": "wecom-channel",
-  "description": "WeCom Channel Plugin marketplace",
   "owner": {
     "name": "yangsjt"
   },
   "plugins": [
     {
       "name": "wecom",
-      "description": "WeCom (Enterprise WeChat) channel for Claude Code",
-      "source": ".",
-      "category": "channel"
+      "description": "WeCom (Enterprise WeChat) channel for Claude Code — messaging bridge with built-in access control and pairing.",
+      "source": "./"
     }
   ]
 }
