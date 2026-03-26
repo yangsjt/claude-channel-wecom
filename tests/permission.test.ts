@@ -7,8 +7,11 @@ import { describe, test, expect } from "bun:test";
 import {
   type PendingPermission,
   PERMISSION_REPLY_RE,
+  PERMISSION_BARE_REPLY_RE,
   formatPermissionMessage,
   matchPermissionReply,
+  resolvePermissionReply,
+  formatAmbiguousMessage,
   findByShortId,
 } from "../lib/permission.js";
 
@@ -75,6 +78,46 @@ describe("PERMISSION_REPLY_RE", () => {
 });
 
 // ---------------------------------------------------------------------------
+// PERMISSION_BARE_REPLY_RE
+// ---------------------------------------------------------------------------
+
+describe("PERMISSION_BARE_REPLY_RE", () => {
+  test("matches 'y'", () => {
+    expect(PERMISSION_BARE_REPLY_RE.test("y")).toBe(true);
+  });
+
+  test("matches 'yes'", () => {
+    expect(PERMISSION_BARE_REPLY_RE.test("yes")).toBe(true);
+  });
+
+  test("matches 'n'", () => {
+    expect(PERMISSION_BARE_REPLY_RE.test("n")).toBe(true);
+  });
+
+  test("matches 'no'", () => {
+    expect(PERMISSION_BARE_REPLY_RE.test("no")).toBe(true);
+  });
+
+  test("case insensitive", () => {
+    expect(PERMISSION_BARE_REPLY_RE.test("Y")).toBe(true);
+    expect(PERMISSION_BARE_REPLY_RE.test("YES")).toBe(true);
+    expect(PERMISSION_BARE_REPLY_RE.test("No")).toBe(true);
+  });
+
+  test("rejects 'y' with shortId", () => {
+    expect(PERMISSION_BARE_REPLY_RE.test("y abc12")).toBe(false);
+  });
+
+  test("rejects non-matching text", () => {
+    expect(PERMISSION_BARE_REPLY_RE.test("hello")).toBe(false);
+    expect(PERMISSION_BARE_REPLY_RE.test("yeah")).toBe(false);
+    expect(PERMISSION_BARE_REPLY_RE.test("nope")).toBe(false);
+    expect(PERMISSION_BARE_REPLY_RE.test("ok")).toBe(false);
+    expect(PERMISSION_BARE_REPLY_RE.test("")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // matchPermissionReply
 // ---------------------------------------------------------------------------
 
@@ -117,6 +160,105 @@ describe("matchPermissionReply", () => {
 });
 
 // ---------------------------------------------------------------------------
+// resolvePermissionReply
+// ---------------------------------------------------------------------------
+
+describe("resolvePermissionReply", () => {
+  test("explicit shortId returns resolved", () => {
+    const map = new Map<string, PendingPermission>();
+    map.set("abc12xyz", makePerm({ requestId: "abc12xyz" }));
+
+    const result = resolvePermissionReply("y abc12", map);
+    expect(result).toEqual({ kind: "resolved", approved: true, shortId: "abc12" });
+  });
+
+  test("explicit shortId returns resolved even with empty map", () => {
+    const map = new Map<string, PendingPermission>();
+
+    const result = resolvePermissionReply("y abc12", map);
+    expect(result).toEqual({ kind: "resolved", approved: true, shortId: "abc12" });
+  });
+
+  test("bare 'y' with 1 pending returns resolved", () => {
+    const map = new Map<string, PendingPermission>();
+    map.set("def45xyz", makePerm({ requestId: "def45xyz" }));
+
+    const result = resolvePermissionReply("y", map);
+    expect(result).toEqual({ kind: "resolved", approved: true, shortId: "def45" });
+  });
+
+  test("bare 'n' with 1 pending returns resolved (denied)", () => {
+    const map = new Map<string, PendingPermission>();
+    map.set("ghi78xyz", makePerm({ requestId: "ghi78xyz" }));
+
+    const result = resolvePermissionReply("n", map);
+    expect(result).toEqual({ kind: "resolved", approved: false, shortId: "ghi78" });
+  });
+
+  test("bare 'yes' with 1 pending returns resolved", () => {
+    const map = new Map<string, PendingPermission>();
+    map.set("jkl90xyz", makePerm({ requestId: "jkl90xyz" }));
+
+    const result = resolvePermissionReply("yes", map);
+    expect(result).toEqual({ kind: "resolved", approved: true, shortId: "jkl90" });
+  });
+
+  test("bare 'no' with 1 pending returns resolved (denied)", () => {
+    const map = new Map<string, PendingPermission>();
+    map.set("mno12xyz", makePerm({ requestId: "mno12xyz" }));
+
+    const result = resolvePermissionReply("no", map);
+    expect(result).toEqual({ kind: "resolved", approved: false, shortId: "mno12" });
+  });
+
+  test("bare 'y' with 0 pending returns none", () => {
+    const map = new Map<string, PendingPermission>();
+
+    const result = resolvePermissionReply("y", map);
+    expect(result).toEqual({ kind: "none" });
+  });
+
+  test("bare 'y' with 2 pending returns ambiguous", () => {
+    const perm1 = makePerm({ requestId: "abc12xyz", toolName: "bash" });
+    const perm2 = makePerm({ requestId: "def45xyz", toolName: "python" });
+    const map = new Map<string, PendingPermission>();
+    map.set("abc12xyz", perm1);
+    map.set("def45xyz", perm2);
+
+    const result = resolvePermissionReply("y", map);
+    expect(result.kind).toBe("ambiguous");
+    if (result.kind === "ambiguous") {
+      expect(result.pending).toHaveLength(2);
+    }
+  });
+
+  test("non-matching text returns none", () => {
+    const map = new Map<string, PendingPermission>();
+    map.set("abc12xyz", makePerm());
+
+    expect(resolvePermissionReply("hello", map)).toEqual({ kind: "none" });
+    expect(resolvePermissionReply("", map)).toEqual({ kind: "none" });
+    expect(resolvePermissionReply("yeah", map)).toEqual({ kind: "none" });
+  });
+
+  test("trims whitespace for bare reply", () => {
+    const map = new Map<string, PendingPermission>();
+    map.set("abc12xyz", makePerm({ requestId: "abc12xyz" }));
+
+    const result = resolvePermissionReply("  y  ", map);
+    expect(result).toEqual({ kind: "resolved", approved: true, shortId: "abc12" });
+  });
+
+  test("case insensitive for bare reply", () => {
+    const map = new Map<string, PendingPermission>();
+    map.set("abc12xyz", makePerm({ requestId: "abc12xyz" }));
+
+    const result = resolvePermissionReply("Y", map);
+    expect(result).toEqual({ kind: "resolved", approved: true, shortId: "abc12" });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // formatPermissionMessage
 // ---------------------------------------------------------------------------
 
@@ -145,6 +287,52 @@ describe("formatPermissionMessage", () => {
   test("shortId is first 5 chars lowercase of requestId", () => {
     const msg = formatPermissionMessage(makePerm({ requestId: "ABCDE99999" }));
     expect(msg).toContain('"y abcde"');
+  });
+
+  test("includes bare reply hint", () => {
+    const msg = formatPermissionMessage(makePerm());
+    expect(msg).toContain('或直接回复 "y"/"n"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatAmbiguousMessage
+// ---------------------------------------------------------------------------
+
+describe("formatAmbiguousMessage", () => {
+  test("lists all pending permissions with shortIds", () => {
+    const pending = [
+      makePerm({ requestId: "abc12xyz", toolName: "bash", description: "Run shell" }),
+      makePerm({ requestId: "def45xyz", toolName: "python", description: "Run script" }),
+    ];
+    const msg = formatAmbiguousMessage(pending);
+    expect(msg).toContain("2 个待处理");
+    expect(msg).toContain("abc12");
+    expect(msg).toContain("bash");
+    expect(msg).toContain("def45");
+    expect(msg).toContain("python");
+  });
+
+  test("includes instruction to specify shortId", () => {
+    const pending = [
+      makePerm({ requestId: "abc12xyz" }),
+      makePerm({ requestId: "def45xyz" }),
+    ];
+    const msg = formatAmbiguousMessage(pending);
+    expect(msg).toContain('"y <编号>"');
+  });
+
+  test("handles 3 entries", () => {
+    const pending = [
+      makePerm({ requestId: "aaa11xyz", toolName: "bash" }),
+      makePerm({ requestId: "bbb22xyz", toolName: "python" }),
+      makePerm({ requestId: "ccc33xyz", toolName: "node" }),
+    ];
+    const msg = formatAmbiguousMessage(pending);
+    expect(msg).toContain("3 个待处理");
+    expect(msg).toContain("aaa11");
+    expect(msg).toContain("bbb22");
+    expect(msg).toContain("ccc33");
   });
 });
 

@@ -42,9 +42,9 @@ import {
 import {
   type PendingPermission,
   PENDING_PERMISSION_TTL_MS,
-  PERMISSION_REPLY_RE,
   formatPermissionMessage,
-  matchPermissionReply,
+  resolvePermissionReply,
+  formatAmbiguousMessage,
   findByShortId,
 } from "./lib/permission.js";
 
@@ -172,15 +172,22 @@ async function handlePermissionReply(
   fromUser: string,
   replyFn: (msg: string) => Promise<void>,
 ): Promise<boolean> {
-  const parsed = matchPermissionReply(text);
-  if (!parsed) return false;
+  const resolved = resolvePermissionReply(text, pendingPermissions);
 
-  const { approved, shortId } = parsed;
+  if (resolved.kind === "none") return false;
+
+  if (resolved.kind === "ambiguous") {
+    await replyFn(formatAmbiguousMessage(resolved.pending)).catch(() => {});
+    return true;
+  }
+
+  // kind === "resolved"
+  const { approved, shortId } = resolved;
   const result = findByShortId(pendingPermissions, shortId);
 
   if (!result) {
-    await replyFn(`⚠️ 未找到匹配的权限请求 (${shortId})`).catch(() => {});
-    return true; // Still consumed the message pattern
+    await replyFn(`⚠️ 未找到匹配的权限请求 (${shortId})，可能已过期（有效期 15 分钟）`).catch(() => {});
+    return true;
   }
 
   // Send permission decision back to Claude
@@ -795,8 +802,8 @@ async function handleAiBotCallback(
       });
     }
 
-    // Permission reply intercept
-    if (msg.content && PERMISSION_REPLY_RE.test(msg.content.trim())) {
+    // Permission reply intercept (supports bare "y"/"n" and "y <shortId>")
+    if (msg.content && resolvePermissionReply(msg.content, pendingPermissions).kind !== "none") {
       const replyStreamId = streamManager.create();
       const handled = await handlePermissionReply(
         msg.content,
@@ -955,12 +962,12 @@ async function handleAgentCallback(
       return successResponse;
     }
 
-    // Permission reply intercept
-    if (msg.text && PERMISSION_REPLY_RE.test(msg.text.trim())) {
+    // Permission reply intercept (supports bare "y"/"n" and "y <shortId>")
+    if (msg.text) {
       const agentCreds = config.corpId && config.corpSecret && config.agentId
         ? { corpId: config.corpId, corpSecret: config.corpSecret, agentId: config.agentId }
         : null;
-      handlePermissionReply(
+      const handled = await handlePermissionReply(
         msg.text,
         msg.senderId,
         async (confirmText) => {
@@ -968,8 +975,11 @@ async function handleAgentCallback(
             await agentSendText({ agent: agentCreds, toUser: msg.senderId, text: confirmText });
           }
         },
-      ).catch((err) => log(`Permission reply handling failed: ${err}`, "error"));
-      return successResponse;
+      ).catch((err) => {
+        log(`Permission reply handling failed: ${err}`, "error");
+        return false;
+      });
+      if (handled) return successResponse;
     }
 
     // Store pending message for reply
